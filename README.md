@@ -1,69 +1,40 @@
 # Planner Docker Infra
 
-Infraestructura de [Planner For Education](https://github.com/Jeisondls/planner-for-education): Odoo, PostgreSQL, Nginx y certificados TLS en contenedores con Docker Compose.
+Infraestructura de [Planner For Education](https://github.com/Jeisondls/planner-for-education): una aplicación web y su base de datos en contenedores, publicadas detrás de un proxy inverso con TLS.
 
-> Los archivos reales son privados. Este documento describe el diseño y las decisiones. No incluye contraseñas, claves ni datos del servidor.
-
-## Servicios
-
-| Servicio | Imagen | Función |
-|---|---|---|
-| `odoo` | Imagen propia sobre `odoo:17.0` | Aplicación web y API |
-| `odoo-queue` | La misma imagen | Procesa la cola de IA y las tareas programadas, sin servidor web |
-| `db` | `postgres:16` | Base de datos con volumen persistente |
-| `nginx` | `nginx:1.27-alpine` | Entrada pública, TLS, límites de tráfico y archivos de la app web |
-| `certbot` | `certbot/certbot` | Emisión y renovación de certificados |
+> Los archivos reales son privados. Este documento resume los principios de diseño y no incluye configuración, versiones ni datos de ningún entorno.
 
 ## Arquitectura
 
 ```mermaid
 flowchart TB
-    I((Internet)) -->|80 / 443| N[Nginx]
-    N -->|/ y /api| O[odoo]
-    N -->|/websocket| O
-    N -->|archivos estáticos| W[App web]
-    O --> DB[(PostgreSQL 16)]
-    Q[odoo-queue<br/>CPU y memoria limitadas] --> DB
-    C[certbot] -.certificados.-> N
+    I((Internet)) --> N[Proxy inverso + TLS]
+    N --> A[Aplicación]
+    A --> DB[(Base de datos)]
+    Q[Proceso de tareas en segundo plano] --> DB
 ```
 
-## Problemas y soluciones
+## Principios de diseño
 
-| Problema | Solución aplicada |
+| Principio | Enfoque |
 |---|---|
-| La generación con IA compite por recursos con la app | Un segundo contenedor con la misma imagen, sin HTTP y con límites de CPU y memoria. El número de hilos de la cola se ajusta por variable de entorno según el tamaño del servidor |
-| Odoo no debe quedar expuesto directamente | Odoo escucha solo en `127.0.0.1`. Todo el tráfico público entra por Nginx |
-| Arrancar en orden correcto | `depends_on` con condiciones de salud: Odoo espera a que PostgreSQL esté listo, y Nginx a que Odoo responda |
-| Detectar contenedores colgados | Healthchecks con reinicio automático (`unless-stopped`) |
-| Los PDF salen con tipografías distintas en el servidor | La imagen instala fuentes equivalentes a Arial, Times New Roman, Courier New, Calibri y Cambria |
-| Dependencias de Python reproducibles | Se instalan al construir la imagen, no al arrancar |
-| Secretos fuera del repositorio | Variables en un archivo `.env` ignorado por git, con un `.env.example` documentado |
-| Abuso de la API | Límite de peticiones por cliente en Nginx |
-| Cabeceras de seguridad | HSTS, política de contenido, protección contra incrustación y tipo de contenido |
-| Publicar la web sin reiniciar | Nginx sirve la app web desde un volumen de solo lectura: se reemplazan los archivos |
-| Renovar certificados sin parar el servicio | Certbot con validación `.well-known` servida por Nginx |
-
-## Procedimiento de actualización
-
-```bash
-# Tras cambiar modelos, datos o vistas de un módulo
-docker compose exec odoo odoo -d <base> -u <modulo> --stop-after-init
-docker compose restart odoo odoo-queue
-
-# Si cambian las dependencias de Python, reconstruir la imagen
-docker compose build odoo && docker compose up -d
-```
+| Aislar las tareas pesadas | Las tareas en segundo plano corren en un proceso separado, con recursos acotados, para no afectar la aplicación |
+| Superficie de exposición mínima | Solo el proxy inverso recibe tráfico público; el resto de los servicios no es accesible desde fuera |
+| Arranque y recuperación fiables | Comprobaciones de salud y reinicio automático |
+| Builds reproducibles | Las dependencias se resuelven al construir la imagen, no al arrancar |
+| Secretos fuera del repositorio | La configuración sensible se inyecta por entorno y nunca se versiona |
+| Despliegues sin interrupción | Certificados y archivos estáticos se renuevan sin detener el servicio |
 
 ## Decisiones técnicas
 
-- **Una imagen, dos roles** (web y cola): menos mantenimiento y comportamiento idéntico.
-- **Volúmenes nombrados** para la base de datos y los archivos de Odoo, separados del código.
-- **Configuración por archivo** para cada rol (`odoo.conf` y `odoo-queue.conf`).
+- **Una imagen, varios roles:** menos mantenimiento y comportamiento idéntico entre procesos.
+- **Datos separados del código:** el almacenamiento persistente es independiente de las imágenes.
+- **Configuración por entorno:** la misma base de código se despliega en distintos entornos sin cambios.
 
 ## Tecnologías
 
-Docker · Docker Compose · PostgreSQL 16 · Nginx · Certbot · Let's Encrypt · Odoo 17
+Docker · Docker Compose · PostgreSQL · Nginx · TLS · Odoo
 
 ## Relacionado
 
-[Backend Odoo](https://github.com/Jeisondls/planner-odoo-backend) · [App móvil](https://github.com/Jeisondls/planner-mobile) · [Versión web](https://github.com/Jeisondls/planner-web)
+[Proyecto](https://github.com/Jeisondls/planner-for-education) · [Backend](https://github.com/Jeisondls/planner-odoo-backend)
